@@ -1,0 +1,59 @@
+# GitHub Labels Configuration
+# https://github.com/vxcontrol/pentagi/labels
+# Sync with: gh label list or GitHub UI
+
+- name: bug
+  description: Something isn't working
+  color: d73a4a
+
+- name: enhancement
+  description: New feature or request
+  color: a2eeef
+
+- name: documentation
+  description: Improvements or additions to documentation
+  color: 0075ca
+
+- name: good first issue
+  description: Good for newcomers
+  color: 7057ff
+
+- name: help wanted
+  description: Extra attention is needed
+  color: 008672
+
+- name: question
+  description: Further information is requested
+  color: d876e3
+
+- name: security
+  description: Security-related issue
+  color: e99695
+
+- name: stale
+  description: Issue has been inactive for 90 days
+  color: ffffff
+
+- name: wontfix
+  description: This will not be worked on
+  color: ffffff
+
+- name: triage
+  description: Needs maintainer review
+  color: fbca04
+
+- name: backend
+  description: Backend (Go) related
+  color: 0e8a16
+
+- name: frontend
+  description: Frontend (React/TS) related
+  color: 1d76db
+
+- name: docker
+  description: Docker/infrastructure related
+  color: 5319e7
+
+- name: dependencies
+  description: Dependency updates
+  color: 0366d6
