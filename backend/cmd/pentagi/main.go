@@ -47,6 +47,15 @@ func main() {
 		log.Fatalf("Unable to load config: %v\n", err)
 	}
 
+	// Validate configuration at startup
+	if warnings, err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed: %v\n", err)
+	} else {
+		for _, w := range warnings {
+			logrus.Warnf("Configuration warning: %s", w)
+		}
+	}
+
 	// Configure logrus log level based on DEBUG env variable
 	if cfg.Debug {
 		logrus.SetLevel(logrus.DebugLevel)

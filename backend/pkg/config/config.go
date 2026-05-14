@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"github.com/caarlos0/env/v10"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/sirupsen/logrus"
 	"github.com/vxcontrol/cloud/anonymizer/patterns"
 	"github.com/vxcontrol/cloud/sdk"
 )
@@ -224,9 +227,14 @@ type Config struct {
 	AgentPlanningStepEnabled bool `env:"AGENT_PLANNING_STEP_ENABLED" envDefault:"false"`
 }
 
+// ErrMissingRequiredConfig is returned when a required configuration is missing.
+var ErrMissingRequiredConfig = errors.New("missing required configuration")
+
 func NewConfig() (*Config, error) {
-	// Attempt to load .env file (silently ignore if not present)
-	_ = godotenv.Load()
+	// Attempt to load .env file
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		logrus.Warnf("Failed to load .env file: %v", err)
+	}
 
 	var config Config
 	if err := env.ParseWithOptions(&config, env.Options{
@@ -247,6 +255,64 @@ func NewConfig() (*Config, error) {
 	ensureLicenseKey(&config)
 
 	return &config, nil
+}
+
+// Validate checks that required configurations are present at startup.
+// Returns a list of warnings for missing optional-but-recommended configs,
+// and an error if a hard requirement is missing.
+func (c *Config) Validate() (warnings []string, err error) {
+	// ─── Database is always required ───
+	if c.DatabaseURL == "" {
+		return nil, fmt.Errorf("%w: DATABASE_URL is required", ErrMissingRequiredConfig)
+	}
+
+	// ─── At least one LLM provider must be configured ───
+	llmProviders := []struct {
+		key   string
+		name  string
+		value string
+	}{
+		{c.OpenAIKey, "OPEN_AI_KEY", "OpenAI"},
+		{c.AnthropicAPIKey, "ANTHROPIC_API_KEY", "Anthropic"},
+		{c.GeminiAPIKey, "GEMINI_API_KEY", "Gemini"},
+		{c.DeepSeekAPIKey, "DEEPSEEK_API_KEY", "DeepSeek"},
+		{c.GLMAPIKey, "GLM_API_KEY", "GLM"},
+		{c.KimiAPIKey, "KIMI_API_KEY", "Kimi"},
+		{c.QwenAPIKey, "QWEN_API_KEY", "Qwen"},
+		{c.LLMServerKey, "LLM_SERVER_KEY", "Custom LLM"},
+		{c.OllamaServerURL, "OLLAMA_SERVER_URL", "Ollama"},
+	}
+
+	var hasLLM bool
+	var configuredProviders []string
+	for _, p := range llmProviders {
+		if p.value != "" {
+			hasLLM = true
+			configuredProviders = append(configuredProviders, p.name)
+		}
+	}
+
+	if !hasLLM {
+		warnings = append(warnings, "No LLM provider configured. Set at least one: OPEN_AI_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.")
+	} else {
+		logrus.Infof("LLM providers configured: %s", strings.Join(configuredProviders, ", "))
+	}
+
+	// ─── Check common deployment pitfalls ───
+	if c.CookieSigningSalt == "" {
+		warnings = append(warnings, "COOKIE_SIGNING_SALT is empty. Session cookies will be insecure. Set a random value in production.")
+	}
+
+	if !c.ServerUseSSL && c.ServerPort == 443 {
+		warnings = append(warnings, "SERVER_USE_SSL is false but SERVER_PORT is 443. SSL is strongly recommended for production.")
+	}
+
+	// ─── Docker configuration check ───
+	if !c.DockerInside && c.DockerSocket == "" {
+		warnings = append(warnings, "DOCKER_SOCKET is empty. Container execution may fail if Docker is not available at the default socket path.")
+	}
+
+	return warnings, nil
 }
 
 func ensureInstallationID(config *Config) {

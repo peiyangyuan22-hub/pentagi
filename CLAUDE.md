@@ -22,6 +22,24 @@ The application is a monorepo with:
 
 ## Build & Development Commands
 
+### Quick Start (Makefile — recommended)
+
+```bash
+make help                     # Show all available commands
+make install                  # Install all dependencies (backend + frontend)
+make env-check                # Validate .env file has required variables
+make backend                  # Build backend binary
+make dev-backend              # Run backend in dev mode
+make dev-frontend             # Run frontend dev server (http://localhost:8000)
+make test                     # Run all tests
+make lint                     # Run all linters
+make pre-commit               # Run pre-commit checks (lint + short tests)
+make pre-commit-install       # Install git pre-commit hook (secrets detection)
+make generate                 # Regenerate all code (gqlgen + swagger + frontend types)
+make docker-up                # Start core Docker services
+make docker-up-all            # Start all services (core + monitoring)
+```
+
 ### Backend (run from `backend/`)
 
 ```bash

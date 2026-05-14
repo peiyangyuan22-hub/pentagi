@@ -1,0 +1,42 @@
+#!/bin/sh
+# PentAGI pre-commit hook
+# Prevents accidental commit of secrets and runs basic checks
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "${YELLOW}⏳ Running pre-commit checks...${NC}"
+
+# ─── Check 1: Prevent committing .env files (with actual secrets) ───
+if git diff --cached --name-only | grep -q '^\.env$'; then
+    echo "${RED}❌ ERROR: You are trying to commit .env file which may contain secrets!${NC}"
+    echo "   If you need to update env template, use 'make env-template' or commit .env.example"
+    exit 1
+fi
+
+# ─── Check 2: Scan for accidentally staged API keys / secrets ───
+if git diff --cached -U0 | grep -iE '(api[-_]?key|secret|token|password)\s*[=:]\s*["\x27]?[A-Za-z0-9_\-]{20,}["\x27]?' > /dev/null 2>&1; then
+    echo "${RED}❌ WARNING: Potential API key/secret/token detected in staged changes!${NC}"
+    echo "   Please review your changes before committing."
+    echo "   If this is a false positive, use --no-verify to bypass."
+    exit 1
+fi
+
+# ─── Check 3: Prevent merge conflicts markers ───
+if git diff --cached -U0 | grep -E '^\+<<<<<<<|^\+=======$|^\+>>>>>>>' > /dev/null 2>&1; then
+    echo "${RED}❌ ERROR: Merge conflict markers found in staged changes!${NC}"
+    exit 1
+fi
+
+# ─── Check 4: Large files (>10MB) ───
+if git diff --cached --name-only -z | xargs -0 ls -l 2>/dev/null | awk '{if($5 > 10485760) print $9}' | grep -q .; then
+    echo "${RED}❌ ERROR: Files larger than 10MB detected. Please use Git LFS.${NC}"
+    git diff --cached --name-only -z | xargs -0 ls -l 2>/dev/null | awk '{if($5 > 10485760) print $9, int($5/1048576) "MB"}'
+    exit 1
+fi
+
+echo "${GREEN}✅ Pre-commit checks passed${NC}"
