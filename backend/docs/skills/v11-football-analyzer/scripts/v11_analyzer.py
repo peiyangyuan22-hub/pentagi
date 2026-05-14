@@ -2,10 +2,19 @@
 V11 足球分析框架 — 六步信号驱动分析 + 三方案串关构建
 
 独立运行：python scripts/v11_analyzer.py
+
+改进 v2026-05-14:
+  - Kelly 资金分配（动态计算）
+  - 让球盘⇔百家平均换算交叉验证
+  - 赛后复盘日志（jsonl）
 """
 
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
+import json
+import math
+import os
+from datetime import datetime, timezone, timedelta
 
 
 # ==================== 常量 ====================
@@ -14,8 +23,16 @@ MIN_ODD = 1.50
 MAX_ODD = 4.00
 RANK_GAP_HIGH = 5
 
-# 方案资金分配
+# 方案资金分配（硬编码兜底，Kelly覆盖时忽略）
 FUND_ALLOCATION = {"A": 40, "B": 40, "C": 20}
+
+# Kelly 参数
+KELLY_FRACTION = 0.25        # 分数 Kelly，降低波动
+KELLY_MAX_STAKE = 0.15       # 单注最大 15%
+KELLY_MIN_EDGE = 0.05        # 最小正期望门槛
+
+# 复盘日志路径
+REVIEW_LOG = os.path.join(os.path.dirname(__file__), "review.log.jsonl")
 
 
 # ==================== 类型定义 ====================
@@ -92,6 +109,119 @@ class Prediction:
         return self.label == Label.HOT
 
 
+# ==================== 辅助函数 ====================
+
+def kelly_criterion(odds: float, prob: float, bankroll_pct: float = KELLY_FRACTION) -> float:
+    """
+    分数 Kelly 公式计算建议下注比例
+
+    Args:
+        odds: 十进制赔率
+        prob: 获胜概率 (0-1)
+        bankroll_pct: 分数 Kelly 系数，默认 0.25
+
+    Returns:
+        建议下注比例（占资金的百分比）
+    """
+    b = odds - 1.0
+    q = 1.0 - prob
+    edge = b * prob - q
+    if edge <= KELLY_MIN_EDGE:
+        return 0.0
+    fraction = bankroll_pct * edge / b
+    return min(max(fraction, 0.0), KELLY_MAX_STAKE)
+
+
+def odds_to_prob(odds: float) -> float:
+    """赔率倒推隐含概率（无反佣金修正）"""
+    return 1.0 / odds
+
+
+def handicap_convert(handicap: int, avg_home: float, avg_away: float, direction: str) -> bool:
+    """
+    让球盘方向 → 百家平均验证：让球方需要净胜 handicap+1 球
+
+    示例：
+        handicap=-1, 方向=让胜 → 需要净胜≥2球
+        百家平均主胜赔率低 → 市场看好主队能赢 → 可能支持
+    """
+    if direction == Direction.WIN:
+        # 让球胜：需要净胜 ≥ abs(handicap) + 1
+        return avg_home < avg_away  # 百家看好主队
+    elif direction == Direction.LOSS:
+        return avg_away < avg_home  # 百家看好客队
+    else:
+        return True  # 让平无法用百家平均验证
+
+
+class ReviewTracker:
+    """赛后复盘日志追踪器"""
+
+    def __init__(self, log_path: str = REVIEW_LOG):
+        self.log_path = log_path
+
+    def record(self, match_id: str, direction: str, label: str, min_odd: float,
+               confidence: int, actual_result: Optional[str] = None):
+        """记录一条预测"""
+        entry = {
+            "ts": datetime.now(timezone(timedelta(hours=8))).isoformat(),
+            "match_id": match_id,
+            "direction": direction,
+            "label": label,
+            "min_odd": min_odd,
+            "confidence": confidence,
+            "actual": actual_result,
+        }
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def update_result(self, match_id: str, actual_result: str):
+        """赛后回填实际结果"""
+        if not os.path.exists(self.log_path):
+            return
+        lines = []
+        updated = False
+        with open(self.log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                if entry["match_id"] == match_id and entry["actual"] is None:
+                    entry["actual"] = actual_result
+                    updated = True
+                lines.append(json.dumps(entry, ensure_ascii=False))
+        if updated:
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                for line in lines:
+                    f.write(line + "\n")
+
+    def stats(self) -> dict:
+        """统计各标签准确率"""
+        if not os.path.exists(self.log_path):
+            return {}
+        records = []
+        with open(self.log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                records.append(json.loads(line))
+
+        completed = [r for r in records if r["actual"] is not None]
+        stats = {"total": len(records), "pending": len(records) - len(completed)}
+        # 按标签统计
+        for label in set(r["label"] for r in completed):
+            group = [r for r in completed if r["label"] == label]
+            correct = sum(1 for r in group if r["direction"] == r["actual"])
+            stats[label] = {
+                "total": len(group),
+                "correct": correct,
+                "accuracy": round(correct / len(group), 3) if group else 0,
+            }
+        return stats
+
+
 # ==================== V11Analyzer ====================
 
 class V11Analyzer:
@@ -147,17 +277,40 @@ class V11Analyzer:
 
         return fundamental_favors_home == market_favors_home
 
-    # ── 第三步：百家平均交叉验证 ────────────────
+    # ── 第三步：百家平均交叉验证（含让球换算）────
 
-    def _check_avg_alignment(self, m: Match, direction: str) -> Optional[bool]:
-        """百家平均是否与让球盘方向一致"""
+    def _check_avg_alignment(self, m: Match, direction: str) -> Tuple[Optional[bool], float]:
+        """
+        百家平均是否与让球盘方向一致（含换算验证）
+
+        Returns:
+            (aligned: bool, convert_score: float)
+            aligned: True=一致, False=打架, None=无数据
+            convert_score: 0-1 换算匹配度（1=完全匹配）
+        """
         if m.avg_odds is None:
-            return None
+            return None, 0.5
 
+        # 基础方向一致检查
         avg_favors_home = (m.avg_odds.home < m.avg_odds.away)
         market_favors_home = (direction == Direction.WIN)
+        aligned = (avg_favors_home == market_favors_home)
 
-        return avg_favors_home == market_favors_home
+        # 让球换算检查
+        if direction == Direction.WIN and m.handicap < 0:
+            # 让-1要净胜2球：要求百家主胜明显低于客胜(≥20%差距)
+            gap = m.avg_odds.away - m.avg_odds.home
+            required = abs(m.handicap) + 0.5  # 让-1需要至少1.5球以上优势
+            convert_score = min(gap / required, 1.0) if required > 0 else 0.5
+        elif direction == Direction.LOSS and m.handicap > 0:
+            # 受让方要直接赢：百家客胜明显低于主胜
+            gap = m.avg_odds.home - m.avg_odds.away
+            required = abs(m.handicap) + 0.5
+            convert_score = min(gap / required, 1.0) if required > 0 else 0.5
+        else:
+            convert_score = 0.5  # 让平或其他情况无法量化换算
+
+        return aligned, round(convert_score, 2)
 
     # ── 第四步：赔率走势监控 ────────────────────
 
@@ -188,6 +341,7 @@ class V11Analyzer:
         rank_gap: Optional[int],
         fundamental_agrees: Optional[bool],
         avg_agrees: Optional[bool],
+        avg_convert_score: float,
         trend: str,
     ) -> Tuple[str, int]:
         """返回 (标签, 置信度 0-100)"""
@@ -221,6 +375,8 @@ class V11Analyzer:
             confidence += 20                   # 排名支持 +20
         if avg_agrees is True:
             confidence += 10                   # 百家支持 +10
+        # 让球盘换算匹配度加权（最高+5）
+        confidence += int(avg_convert_score * 10)
         if trend == "收紧":
             confidence += 10                   # 走势收紧 +10
 
@@ -231,22 +387,22 @@ class V11Analyzer:
 
     # ── 主入口 ─────────────────────────────────
 
-    def analyze_match(self, m: Match) -> Prediction:
+    def analyze_match(self, m: Match, tracker: Optional[ReviewTracker] = None) -> Prediction:
         """分析单场比赛"""
         direction, min_odd = self._get_market_direction(m)
         spread = self._calc_spread(m)
         rank_gap = self._get_rank_gap(m)
 
         fundamental_agrees = self._check_fundamental_alignment(rank_gap, direction)
-        avg_agrees = self._check_avg_alignment(m, direction)
+        avg_agrees, avg_convert_score = self._check_avg_alignment(m, direction)
         trend = self._check_trend(m)
 
         label, confidence = self._assign_label(
             m, direction, min_odd, spread,
-            rank_gap, fundamental_agrees, avg_agrees, trend,
+            rank_gap, fundamental_agrees, avg_agrees, avg_convert_score, trend,
         )
 
-        return Prediction(
+        pred = Prediction(
             match_id=m.match_id,
             direction=direction,
             label=label,
@@ -257,14 +413,19 @@ class V11Analyzer:
             confidence=confidence,
         )
 
-    def analyze_matches(self, matches: List[Match]) -> List[Prediction]:
+        if tracker:
+            tracker.record(m.match_id, direction, label, min_odd, confidence)
+
+        return pred
+
+    def analyze_matches(self, matches: List[Match], tracker: Optional[ReviewTracker] = None) -> List[Prediction]:
         """批量分析"""
-        return [self.analyze_match(m) for m in matches]
+        return [self.analyze_match(m, tracker) for m in matches]
 
     # ── 方案构建（建串）────────────────────────
 
     def build_strategies(self, predictions: List[Prediction]) -> dict:
-        """构建三个串关方案"""
+        """构建三个串关方案（含 Kelly 建议）"""
         greens = [p for p in predictions if p.is_green]
         yellows = [p for p in predictions if p.is_yellow]
         hots = [p for p in predictions if p.is_hot]
@@ -293,10 +454,43 @@ class V11Analyzer:
         ][:1]
         strategy_c = c_anchor + c_hot + c_fill
 
+        # Kelly 资金建议
+        kelly_a = self._kelly_weights(strategy_a)
+        kelly_b = self._kelly_weights(strategy_b)
+        kelly_c = self._kelly_weights(strategy_c)
+
         return {
             "strategy_a": strategy_a,
             "strategy_b": strategy_b,
             "strategy_c": strategy_c,
+            "kelly_a": kelly_a,
+            "kelly_b": kelly_b,
+            "kelly_c": kelly_c,
+            "recommended_fund": self._kelly_fund_allocation(predictions),
+        }
+
+    def _kelly_weights(self, picks: List[Prediction]) -> List[float]:
+        """为每个选项计算 Kelly 建议比例"""
+        return [
+            round(kelly_criterion(p.min_odd, p.confidence / 100) * 100, 1)
+            for p in picks
+        ]
+
+    def _kelly_fund_allocation(self, predictions: List[Prediction]) -> dict:
+        """根据总预测质量动态分配三方案资金"""
+        # 只考虑有入选资格的场次
+        qualifiers = [p for p in predictions if p.label not in (Label.GRAY, Label.EXCLUDE)]
+        if not qualifiers:
+            return {"A": 40, "B": 40, "C": 20}
+        avg_conf = sum(p.confidence for p in qualifiers) / len(qualifiers)
+        # 置信度越高，A 方案占比越大
+        a_ratio = min(0.5, 0.25 + (avg_conf - 50) / 200)
+        c_ratio = max(0.1, 0.25 - (avg_conf - 50) / 200)
+        b_ratio = 1.0 - a_ratio - c_ratio
+        return {
+            "A": round(a_ratio * 100),
+            "B": round(b_ratio * 100),
+            "C": round(c_ratio * 100),
         }
 
 
@@ -329,8 +523,10 @@ if __name__ == "__main__":
         ),
     ]
 
+    # 带复盘追踪的分析
+    tracker = ReviewTracker()
     analyzer = V11Analyzer()
-    results = analyzer.analyze_matches(sample_matches)
+    results = analyzer.analyze_matches(sample_matches, tracker)
 
     print("=" * 60)
     print("  🍒 Cherry V11 — 单场分析结果")
@@ -340,23 +536,58 @@ if __name__ == "__main__":
         print(f"  └ 标签={p.label}  赔率={p.min_odd}  spread={p.spread}")
         print(f"      排名差={p.rank_gap}  走势={p.trend}  置信度={p.confidence}%")
 
+        # 展示 Kelly 建议
+        kelly_pct = kelly_criterion(p.min_odd, p.confidence / 100)
+        if kelly_pct > 0:
+            print(f"      Kelly建议={kelly_pct*100:.1f}%")
+
     print("\n" + "=" * 60)
-    print("  串关方案")
+    print("  串关方案 + Kelly 资金分配")
     print("=" * 60)
     strategies = analyzer.build_strategies(results)
-    for name, picks in strategies.items():
-        label = {"strategy_a": "A 稳健基石 🛡️",
-                 "strategy_b": "B 均衡回报 ⚖️",
-                 "strategy_c": "C 高赔冲刺 🚀"}[name]
-        fund = {"strategy_a": 40, "strategy_b": 40, "strategy_c": 20}[name]
+    fund = strategies["recommended_fund"]
+
+    for name, picks_key, fund_key, scheme_key in [
+        ("A 稳健基石 🛡️", "strategy_a", "kelly_a", "A"),
+        ("B 均衡回报 ⚖️", "strategy_b", "kelly_b", "B"),
+        ("C 高赔冲刺 🚀", "strategy_c", "kelly_c", "C"),
+    ]:
+        picks = strategies[picks_key]
+        kelly_pcts = strategies[fund_key]
+        f = fund[scheme_key]
         if picks:
             combo_odd = 1.0
             for p in picks:
                 combo_odd *= p.min_odd
             odds_list = " × ".join([f"{p.min_odd:.2f}" for p in picks])
-            print(f"\n  [{label}]  资金={fund}")
+            kelly_str = ", ".join([f"Kelly {k}%" for k in kelly_pcts])
+            print(f"\n  [{name}] 资金={f}%")
             print(f"  └ {', '.join([p.match_id for p in picks])}")
             print(f"    综合赔率 ≈ {combo_odd:.2f}x  ({odds_list})")
+            print(f"    {kelly_str}")
         else:
-            print(f"\n  [{label}]  资金={fund}")
+            print(f"\n  [{name}] 资金={f}%")
             print(f"  └ (无合格场次)")
+
+    # 复盘日志展示
+    print(f"\n{'=' * 60}")
+    print(f"  复盘日志")
+    print(f"{'=' * 60}")
+    for r in results:
+        min_odd = r.min_odd
+        kelly = kelly_criterion(min_odd, r.confidence / 100)
+        print(f"  [{r.match_id}] {r.direction} | {r.label} | "
+              f"赔率={min_odd} | 置信度={r.confidence}% | "
+              f"Kelly={kelly*100:.1f}%")
+
+    # 显示复盘追踪统计（读现有日志）
+    print(f"\n  历史统计:")
+    stats = tracker.stats()
+    if stats:
+        pending = stats.pop("pending", 0)
+        total = stats.pop("total", 0)
+        print(f"  总记录={total} 待回填={pending}")
+        for label, s in sorted(stats.items()):
+            print(f"  {label}: {s['correct']}/{s['total']} ({s['accuracy']*100:.0f}%)")
+    else:
+        print(f"  (首次运行，尚无历史数据)")
