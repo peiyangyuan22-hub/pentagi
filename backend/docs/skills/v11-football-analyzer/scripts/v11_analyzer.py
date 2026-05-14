@@ -502,8 +502,45 @@ class V11Analyzer:
 # ==================== 测试运行 ====================
 
 if __name__ == "__main__":
-    # 实战示例：周五场次（2026-05-14/15）
+    # 实战示例：2026-05-14/15 全部 10 场
     sample_matches = [
+        # ── 周四场次 ──
+        Match(
+            match_id="周四001", league="西甲",
+            home_team="巴伦西亚", away_team="巴列卡诺",
+            home_rank=13, away_rank=10, handicap=-1,
+            odds_win=4.95, odds_draw=3.85, odds_loss=1.50,
+            avg_odds=AvgOdds(home=2.24, draw=3.08, away=3.50),
+        ),
+        Match(
+            match_id="周四002", league="沙特联",
+            home_team="达曼协定", away_team="吉达联合",
+            home_rank=7, away_rank=6, handicap=1,
+            odds_win=1.66, odds_draw=3.70, odds_loss=3.90,
+            avg_odds=AvgOdds(home=3.21, draw=3.72, away=1.97),
+        ),
+        Match(
+            match_id="周四003", league="沙特联",
+            home_team="胡巴尔卡德西亚", away_team="拉斯决心",
+            home_rank=4, away_rank=9, handicap=-2,
+            odds_win=2.32, odds_draw=3.80, odds_loss=2.30,
+            avg_odds=AvgOdds(home=1.20, draw=6.85, away=10.05),
+        ),
+        Match(
+            match_id="周四004", league="西甲",
+            home_team="赫罗纳", away_team="皇家社会",
+            home_rank=19, away_rank=8, handicap=-1,
+            odds_win=3.60, odds_draw=3.50, odds_loss=1.77,
+            avg_odds=AvgOdds(home=1.90, draw=3.76, away=3.82),
+        ),
+        Match(
+            match_id="周四005", league="西甲",
+            home_team="皇马", away_team="奥维耶多",
+            home_rank=2, away_rank=20, handicap=-2,
+            odds_win=2.66, odds_draw=3.70, odds_loss=2.07,
+            avg_odds=AvgOdds(home=1.24, draw=6.35, away=10.49),
+        ),
+        # ── 周五场次 ──
         Match(
             match_id="周五001", league="澳超",
             home_team="阿德莱德", away_team="奥克兰FC",
