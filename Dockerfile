@@ -24,12 +24,15 @@ RUN apt-get update && apt-get install -y \
 # GraphQL schema for code generation
 COPY ./backend/pkg/graph/schema.graphqls ../backend/pkg/graph/
 
-# Application source code
-COPY frontend/ .
+# Layer caching: install deps before copying full source
+COPY frontend/package.json frontend/package-lock.json ./
 
 # Install dependencies with package manager detection for SBOM
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --include=dev
+
+# Application source code (rest of files)
+COPY frontend/ .
 
 # Generate license report for frontend dependencies
 RUN npm install -g license-checker && \
@@ -71,11 +74,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app/backend
 
-COPY backend/ .
-
-# Fetch Go module dependencies (cached for faster rebuilds)
+# Layer caching: copy dependency files first so they cache independently
+COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download && go mod verify
+
+# Copy the rest of the source
+COPY backend/ .
 
 # Install go-licenses tool for license extraction
 RUN --mount=type=cache,target=/go/pkg/mod \

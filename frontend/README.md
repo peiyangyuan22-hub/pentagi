@@ -1,124 +1,83 @@
 # PentAGI Frontend
 
-A chat application built with React, TypeScript, and GraphQL that enables intelligent conversations with AI agents.
+React 19 + TypeScript + Vite 7 + Tailwind CSS 4 + Apollo GraphQL + Radix UI.
 
-## Features
+## Quick Start
 
--   💬 Real-time chat interface with AI agents
--   🤖 Multiple AI agent support and management
--   📊 Real-time terminal output monitoring
--   🎯 Task and subtask tracking system
--   🔍 Integrated search capabilities
--   📚 Vector store for knowledge base management
--   📸 Screenshot capture and management
--   🌓 Dark/Light theme support
--   📱 Responsive design (mobile, tablet, desktop)
--   🔐 Authentication system with multiple providers
--   🔄 Real-time updates via GraphQL subscriptions
--   ⚡ High-performance React components
+```bash
+cd frontend
+npm ci        # install dependencies
+npm run dev   # start dev server (default: http://localhost:8000)
+```
+
+## Available Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start dev server with hot reload |
+| `npm run build` | TypeScript check + production build |
+| `npm run test` | Run vitest unit tests |
+| `npm run test:coverage` | Run tests with coverage report |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run lint` | ESLint check |
+| `npm run lint:fix` | ESLint auto-fix |
+| `npm run prettier` | Prettier format check |
+| `npm run prettier:fix` | Prettier auto-format |
+| `npm run graphql:generate` | Generate TS types from GraphQL schema |
 
 ## Tech Stack
 
--   **Framework**: React 18 with TypeScript
--   **Build Tool**: Vite
--   **Styling**: Tailwind CSS
--   **UI Components**:
-    -   shadcn/ui
-    -   Radix UI primitives
-    -   Lucide icons
--   **State Management**:
-    -   React Context
-    -   Custom Hooks
--   **API Integration**:
-    -   GraphQL
-    -   Apollo Client
-    -   WebSocket subscriptions
--   **Type Safety**: TypeScript
--   **Authentication**: Multiple provider support
--   **Code Quality**:
-    -   ESLint
-    -   Prettier
-    -   TypeScript strict mode
+| Category | Libraries |
+|----------|-----------|
+| **Framework** | React 19, TypeScript 5.6 |
+| **Bundler** | Vite 7 + SWC |
+| **Styling** | Tailwind CSS 4 + class-variance-authority |
+| **UI Components** | Radix UI primitives + sonner (toast) + cmdk (command palette) |
+| **GraphQL** | Apollo Client 3 + graphql-ws (subscriptions) |
+| **Terminal** | xterm.js with WebGL renderer |
+| **Editor** | Monaco editor |
+| **PDF** | @react-pdf/renderer |
+| **Form** | react-hook-form + zod |
+| **Charts** | recharts |
+| **Markdown** | react-markdown + rehype + remark-gfm |
 
 ## Project Structure
 
+```
 src/
-├── components/ # Shared UI components
-│ ├── ui/ # Base UI components
-│ └── icons/ # SVG icons and logo
-├── features/ # Feature-based modules
-│ ├── chat/ # Chat related components
-│ ├── authentication/ # Auth related components
-├── hooks/ # Custom React hooks
-├── lib/ # Utilities and configurations
-├── graphql/ # GraphQL operations and types
-├── models/ # TypeScript interfaces
-└── pages/ # Application routes
+├── components/     # Shared UI components (Radix-based)
+│   ├── ui/         # Primitive UI elements
+│   ├── layouts/    # Page layout shells
+│   ├── shared/     # App-specific shared components
+│   └── icons/      # SVG icon components
+├── features/       # Feature modules
+│   ├── authentication/  # Login, OAuth, session
+│   └── flows/           # Penetration test workflow UI
+├── hooks/          # Custom React hooks
+├── lib/            # Utilities (api clients, helpers)
+├── models/         # Domain model types
+├── pages/          # Route-level page components
+├── providers/      # React context providers
+├── schemas/        # Zod validation schemas
+├── styles/         # Global CSS + utility classes
+├── types/          # Global TypeScript type definitions
+└── graphql/        # GraphQL queries, mutations, subscriptions
+```
 
-## Key Components
+## Environment
 
-### Chat Interface
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_URL` | `http://localhost:8080` | Backend API endpoint |
+| `VITE_WS_URL` | `ws://localhost:8080/query` | WebSocket for subscriptions |
 
--   Split view with messages and tools panels
--   Resizable panels for desktop
--   Mobile-optimized view with tabs
--   Real-time message updates
+## Codegen
 
-### Task System
+GraphQL types are generated from the backend schema:
 
--   Real-time task tracking
--   Subtask management
--   Progress monitoring
--   Status updates
+```bash
+npm run graphql:generate
+# Output: src/graphql/generated/
+```
 
-### Terminal
-
--   Command output display
--   Real-time updates
--   Scrollable history
--   Syntax highlighting
-
-### Vector Store
-
--   Knowledge base integration
--   Search capabilities
--   Data management
-
-### Agent System
-
--   Multi-agent support
--   Agent status monitoring
--   Agent communication logs
-
-## Development
-
-### Prerequisites
-
--   Node.js 18+
--   npm 8+
-
-### Installation
-
-1. Clone the repository
-2. Install dependencies:
-   npm install
-3. Start the development server:
-   npm run dev
-
-### Building for Production
-
-npm run build
-
-### Environment Variables
-
-Create a .env file in the root directory:
-
-VITE_API_URL=your_api_url
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (git checkout -b feature/amazing-feature)
-3. Commit your changes (git commit -m 'Add some amazing feature')
-4. Push to the branch (git push origin feature/amazing-feature)
-5. Open a Pull Request
+Requires the backend GraphQL schema at `../backend/pkg/graph/schema.graphqls`.
