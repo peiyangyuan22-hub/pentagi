@@ -274,8 +274,13 @@ class V11Analyzer:
 
         fundamental_favors_home = (rank_gap > 0)
         market_favors_home = (direction == Direction.WIN)
+        market_favors_away = (direction == Direction.LOSS)
 
-        return fundamental_favors_home == market_favors_home
+        # 主队优 → 市场方向也得是主队；客队优 → 市场方向也得是客队
+        if fundamental_favors_home:
+            return market_favors_home
+        else:
+            return market_favors_away
 
     # ── 第三步：百家平均交叉验证（含让球换算）────
 
