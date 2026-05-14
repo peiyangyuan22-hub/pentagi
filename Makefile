@@ -157,7 +157,39 @@ pre-commit-install: ## Install git pre-commit hook
 	@chmod +x .git/hooks/pre-commit
 	@echo "✅ Pre-commit hook installed at .git/hooks/pre-commit"
 
-# ─── Cleanup ──────────────────────────────────────────────
+# ─── Quick Start ─────────────────────────────────────────
+
+quickstart: ## One-command setup for new users: check deps, create .env, launch
+	@echo "⏳ 1/4 Checking prerequisites..."
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker is required. Install from https://docs.docker.com/get-docker/"; exit 1; }
+	@command -v docker compose >/dev/null 2>&1 || { echo "❌ docker compose is required."; exit 1; }
+	@echo "✅ docker + docker compose found"
+	@echo "⏳ 2/4 Checking .env..."
+	@if [ ! -f .env ]; then \
+		echo "⚠️  No .env found. Creating .env from template..."; \
+		cp .env.example .env 2>/dev/null || true; \
+		echo "" >> .env; \
+		echo "# === LLM Configuration ====" >> .env; \
+		echo "# Set ONE of the following:" >> .env; \
+		echo "# OPEN_AI_KEY=sk-your-key" >> .env; \
+		echo "# ANTHROPIC_API_KEY=sk-ant-your-key" >> .env; \
+		echo "✅ .env created. Edit it to set your LLM API key before continuing."; \
+		echo ""; \
+		echo "Edit .env now, then re-run: make quickstart"; \
+		exit 0; \
+	fi
+	@echo "✅ .env found"
+	@echo "⏳ 3/4 Checking LLM config..."
+	@grep -q "OPEN_AI_KEY\|ANTHROPIC_API_KEY\|GEMINI_API_KEY\|DEEPSEEK_API_KEY\|OLLAMA_SERVER_URL" .env 2>/dev/null || { \
+		echo "⚠️  No LLM API key found in .env"; \
+		echo "   Add one of: OPEN_AI_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY"; \
+		echo "   Or set OLLAMA_SERVER_URL for local models"; \
+		exit 0; \
+	}
+	@echo "✅ LLM configured"
+	@echo "⏳ 4/4 Starting PentAGI..."
+	@docker compose up -d
+	@echo "✅ PentAGI is running at http://localhost:8080"
 
 clean-backend: ## Clean backend build artifacts
 	cd backend && rm -f pentagi

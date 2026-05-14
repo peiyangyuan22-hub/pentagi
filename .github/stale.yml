@@ -1,0 +1,15 @@
+# Stale bot — auto-close inactive issues and PRs
+# https://github.com/marketplace/stale
+
+daysUntilStale: 90
+daysUntilClose: 30
+exemptLabels:
+  - pinned
+  - security
+  - enhancement
+staleLabel: stale
+markComment: >
+  This issue/PR has been marked as stale due to inactivity.
+  If no activity occurs in the next 30 days, it will be automatically closed.
+  Feel free to reopen if the topic is still relevant.
+closeComment: false

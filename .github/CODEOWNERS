@@ -1,0 +1,16 @@
+# Auto-assign PR reviewers
+# Each line: pattern @owner @team
+
+# Default reviewers
+* @vxcontrol/pentagi-maintainers
+
+# Backend changes
+/backend/ @vxcontrol/pentagi-backend
+
+# Frontend changes
+/frontend/ @vxcontrol/pentagi-frontend
+
+# Infrastructure (Docker, CI, Makefile)
+/Dockerfile @vxcontrol/pentagi-infra
+/.github/ @vxcontrol/pentagi-maintainers
+/Makefile @vxcontrol/pentagi-infra
