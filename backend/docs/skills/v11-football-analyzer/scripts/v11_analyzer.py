@@ -32,7 +32,7 @@ KELLY_MAX_STAKE = 0.15       # 单注最大 15%
 KELLY_MIN_EDGE = 0.05        # 最小正期望门槛
 
 # 复盘日志路径
-REVIEW_LOG = os.path.join(os.path.dirname(__file__), "review.log.jsonl")
+REVIEW_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review.log.jsonl")
 
 
 # ==================== 类型定义 ====================
