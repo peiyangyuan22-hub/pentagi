@@ -3,7 +3,8 @@
 
 .PHONY: help backend frontend docker test lint clean install dev dev-backend dev-frontend \
         test-backend test-frontend generate swagger docker-up docker-up-all docker-build \
-        docker-down pre-commit env-check ci-check
+        docker-down pre-commit env-check ci-check quickstart docker-up-full docker-logs \
+        docker-restart docker-shell docker-psql docker-clean db-migrate db-reset
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -190,6 +191,44 @@ quickstart: ## One-command setup: check deps, create .env, launch minimal stack
 	@echo "⏳ 4/4 Starting PentAGI (core stack: pentagi + postgres + scraper)..."
 	@docker compose -f docker-compose.quickstart.yml up -d
 	@echo "✅ PentAGI is running at http://localhost:8080"
+
+docker-up: docker-compose.quickstart.yml ## Start core services (quickstart stack)
+	docker compose -f docker-compose.quickstart.yml up -d
+
+docker-up-full: docker-compose.yml ## Start full stack (core + all addons)
+	docker compose up -d
+
+docker-logs: ## Follow Docker logs for all services
+	docker compose logs -f
+
+docker-restart: ## Restart all Docker services
+	docker compose -f docker-compose.quickstart.yml restart
+
+docker-shell: ## Open a shell in the running pentagi container
+	docker exec -it pentagi /bin/sh
+
+docker-psql: ## Connect to the PostgreSQL database
+	docker exec -it pentagi-pgvector psql -U pentagiuser -d pentagidb
+
+docker-clean: ## Stop and remove all containers and volumes
+	docker compose -f docker-compose.quickstart.yml down -v
+	docker compose down -v
+
+db-migrate: ## Run database migrations
+	go run ./cmd/pentagi --migrate
+
+db-reset: ## Reset database (drop and recreate)
+	@echo "⚠️  This will delete all data! Continue? [y/N]"
+	@read confirm; \
+	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
+		echo "Aborted."; \
+		exit 1; \
+	fi
+	docker compose -f docker-compose.quickstart.yml down -v
+	docker compose -f docker-compose.quickstart.yml up -d pgvector
+	@sleep 5
+	go run ./cmd/pentagi --migrate
+	@echo "✅ Database reset complete"
 
 clean-backend: ## Clean backend build artifacts
 	cd backend && rm -f pentagi

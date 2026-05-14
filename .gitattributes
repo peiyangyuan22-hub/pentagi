@@ -1,0 +1,51 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Go source
+*.go text diff=golang
+*.mod text
+*.sum text
+
+# Frontend
+*.ts text diff=typescript
+*.tsx text diff=typescript
+*.js text diff=javascript
+*.jsx text diff=javascript
+*.css text diff=css
+*.scss text diff=css
+*.json text
+*.html text
+
+# Markdown / Docs
+*.md text diff=markdown
+*.yml text
+*.yaml text
+
+# Shell scripts
+*.sh text eol=lf
+*.bash text eol=lf
+
+# PowerShell
+*.ps1 text eol=crlf
+
+# Docker
+Dockerfile text
+docker-compose*.yml text
+
+# Binaries - treat as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.ico binary
+
+# Git hooks
+.gitattributes text
+.gitignore text
+.gitkeep text
