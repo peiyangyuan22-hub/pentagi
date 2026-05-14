@@ -430,34 +430,71 @@ class V11Analyzer:
     # ── 方案构建（建串）────────────────────────
 
     def build_strategies(self, predictions: List[Prediction]) -> dict:
-        """构建三个串关方案（含 Kelly 建议）"""
-        greens = [p for p in predictions if p.is_green]
-        yellows = [p for p in predictions if p.is_yellow]
-        hots = [p for p in predictions if p.is_hot]
+        """
+        构建三个 4 串 1 方案
 
-        # 方案 A：稳健基石 🛡️
-        # 3-4场绿标 + 赔率 < 2.00，赔率从低到高
-        strategy_a = sorted(
-            [p for p in greens if p.min_odd < 2.00],
-            key=lambda x: x.min_odd,
-        )[:4]
+        要求：每个方案必须 4 场。若可选池不够，按优先级降级补位：
+          优先: 🟢绿标 > 🔥高赔候选 > 🟡黄标
+          禁止: ⚠️灰标 / 🚫不入
+        """
+        greens = sorted([p for p in predictions if p.is_green], key=lambda x: x.min_odd)
+        yellows = sorted([p for p in predictions if p.is_yellow], key=lambda x: x.min_odd)
+        hots = sorted([p for p in predictions if p.is_hot], key=lambda x: x.min_odd, reverse=True)
 
-        # 方案 B：均衡回报 ⚖️
-        # 2绿标低赔(1.50-1.80) + 1绿标中赔(1.80-2.10) + 1黄标调味(>=2.00)
-        b_low = [p for p in greens if p.min_odd < 1.80][:2]
-        b_mid = [p for p in greens if 1.80 <= p.min_odd < 2.10][:1]
-        b_high = (yellows + hots)[:1]   # 黄标或高赔候选当调味
-        strategy_b = b_low + b_mid + b_high
+        # 所有可选池（按优先级排序）
+        eligible = greens + hots + yellows
 
-        # 方案 C：高赔冲刺 🚀
-        # 2绿标锚底(1.50-1.80) + 1高赔候选(>=2.50) + 1合理补位(1.80-2.10)
-        c_anchor = sorted(greens, key=lambda x: x.min_odd)[:2]
-        c_hot = sorted(hots, key=lambda x: x.min_odd, reverse=True)[:1]
-        c_fill = [
-            p for p in greens
-            if 1.80 <= p.min_odd < 2.10 and p not in c_anchor
-        ][:1]
-        strategy_c = c_anchor + c_hot + c_fill
+        def pick_strategy(name: str, rules: dict) -> list:
+            """根据规则从 eligible 中选取 4 场"""
+            pool = list(eligible)  # 拷贝
+            selected = []
+
+            # 规则指定的强制选场
+            for rule_type, count in rules.get("force", {}).items():
+                candidates = {
+                    "green": list(greens),
+                    "hot": list(hots),
+                    "yellow": list(yellows),
+                }.get(rule_type, [])
+                # 差异化筛选
+                if name == "A":
+                    # A 要低赔：排掉高赔的
+                    candidates = [p for p in candidates if p.min_odd < 2.00]
+                elif name == "C":
+                    # C 要高赔：优先高赔区间
+                    candidates = sorted(candidates, key=lambda x: -x.min_odd)
+                for p in candidates:
+                    if len(selected) >= count:
+                        break
+                    if p not in selected and p in pool:
+                        selected.append(p)
+
+            # 补足到 4 场
+            remaining = [p for p in pool if p not in selected]
+            if name == "A":
+                # A 补低赔
+                remaining.sort(key=lambda x: x.min_odd)
+            elif name == "C":
+                # C 补高赔+合理赔率
+                remaining.sort(key=lambda x: -x.min_odd)
+            else:
+                # B 均衡混合
+                remaining.sort(key=lambda x: x.confidence, reverse=True)
+
+            for p in remaining:
+                if len(selected) >= 4:
+                    break
+                if name == "A" and p.min_odd > 2.50:
+                    continue  # A 不超过 2.50
+                if name == "C" and p.min_odd < 1.60:
+                    continue  # C 不低于 1.60
+                selected.append(p)
+
+            return selected[:4]
+
+        strategy_a = pick_strategy("A", {"force": {"green": 3}, "odd_range": [1.50, 2.00]})
+        strategy_b = pick_strategy("B", {"force": {"green": 2, "yellow": 1}})
+        strategy_c = pick_strategy("C", {"force": {"green": 2, "hot": 1}})
 
         # Kelly 资金建议
         kelly_a = self._kelly_weights(strategy_a)
@@ -616,13 +653,18 @@ if __name__ == "__main__":
                 combo_odd *= p.min_odd
             odds_list = " × ".join([f"{p.min_odd:.2f}" for p in picks])
             kelly_str = ", ".join([f"Kelly {k}%" for k in kelly_pcts])
-            print(f"\n  [{name}] 资金={f}%")
-            print(f"  └ {', '.join([p.match_id for p in picks])}")
-            print(f"    综合赔率 ≈ {combo_odd:.2f}x  ({odds_list})")
-            print(f"    {kelly_str}")
+            picks_detail = "\n".join([
+                f"      {p.match_id}  {p.direction}  {p.label}  赔率{p.min_odd}  conf={p.confidence}%"
+                for p in picks
+            ])
+            print(f"\n  [{name}]  资金={f}%  |  综合赔率 ≈ {combo_odd:.2f}x")
+            print(f"  ── 4串1 ──")
+            print(picks_detail)
+            print(f"  ─────────")
+            print(f"  Kelly: {kelly_str}")
         else:
             print(f"\n  [{name}] 资金={f}%")
-            print(f"  └ (无合格场次)")
+            print(f"  └ (无合格 4 串 1)")
 
     # 复盘日志展示
     print(f"\n{'=' * 60}")
