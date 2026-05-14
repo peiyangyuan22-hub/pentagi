@@ -8,6 +8,11 @@
 backend/tmp
 backend/build
 
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/review.log.jsonl
+
 frontend/coverage
 frontend/dist
 frontend/node_modules
