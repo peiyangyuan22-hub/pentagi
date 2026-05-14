@@ -90,11 +90,13 @@ class Prediction:
     match_id: str
     direction: str           # 让胜/让平/让负
     label: str               # 五级标签
-    min_odd: float           # 最低赔率
+    min_odd: float           # 方向赔率
     spread: float            # 赔率差
-    rank_gap: Optional[int]  # 排名差（正值=主队优）
+    rank_gap: Optional[int]  # 排名差（负数=主队排名更高/更强）
     trend: str               # 收紧/放宽/持平/N/A
     confidence: int          # 置信度 0-100
+    rank_note: str = ""      # 排名方向说明
+    vote_info: str = ""      # 三信号投票诊断
 
     @property
     def is_green(self) -> bool:
@@ -231,16 +233,58 @@ class V11Analyzer:
         self.min_odd = min_odd
         self.max_odd = max_odd
 
-    # ── 第一步：市场方向 ──────────────────────────
+    # ── 第一步：市场方向（三信号投票）────────────
 
     def _get_market_direction(self, m: Match) -> Tuple[str, float]:
-        """返回 (方向, 最低赔率)"""
+        """
+        返回 (方向, 最低赔率)
+
+        改进：不再无条件跟最低赔率。
+        当百家平均和基本面同时指向反向时，执行「三选二」投票：
+          - 信号A 让球盘最低赔率方向
+          - 信号B 百家平均方向
+          - 信号C 基本面方向（排名差）
+        三选二胜出，若让球盘被否决则逆市场选方向。
+        """
+        # 信号A：让球盘最低赔率方向
         options = [
             (Direction.WIN, m.odds_win),
             (Direction.DRAW, m.odds_draw),
             (Direction.LOSS, m.odds_loss),
         ]
-        return min(options, key=lambda x: x[1])
+        market_dir, market_odd = min(options, key=lambda x: x[1])
+
+        # 信号B：百家平均方向
+        avg_dir = None
+        if m.avg_odds is not None:
+            avg_dir = Direction.WIN if m.avg_odds.home < m.avg_odds.away else Direction.LOSS
+
+        # 信号C：基本面方向（仅当排名差显著时）
+        rank_gap = self._get_rank_gap(m)
+        fund_dir = None
+        if rank_gap is not None and abs(rank_gap) > RANK_GAP_HIGH:
+            # rank_gap < 0 → 主队排名更好（数字越小 = 排名越高）→ 主队强
+            fund_dir = Direction.WIN if rank_gap < 0 else Direction.LOSS
+
+        # 投票：百家平均 + 基本面 ≈ 市场
+        # 市场方向本身不算票——它要接受其他两票的裁决
+        dir_votes = {Direction.WIN: 0, Direction.LOSS: 0}
+        for source, dir_ in {"avg": avg_dir, "fund": fund_dir}.items():
+            if dir_ in (Direction.WIN, Direction.LOSS):
+                dir_votes[dir_] += 1
+
+        total_votes = sum(dir_votes.values())
+        if total_votes >= 2:
+            # 百家 + 基本面同时指向同一方向 → 裁掉市场
+            winner = Direction.WIN if dir_votes[Direction.WIN] == 2 else Direction.LOSS
+            if market_dir != winner:
+                inv_odd = m.odds_win if winner == Direction.WIN else m.odds_loss
+                return winner, inv_odd
+        elif total_votes == 1:
+            # 仅一个外部信号有方向，势均力敌，不逆市场
+            pass
+
+        return market_dir, market_odd
 
     def _calc_spread(self, m: Match) -> float:
         """赔率差 = max - min"""
@@ -258,7 +302,8 @@ class V11Analyzer:
     # ── 第二步：基本面交叉验证 ────────────────────
 
     def _get_rank_gap(self, m: Match) -> Optional[int]:
-        """排名差（正值=主队排名更好）"""
+        """排名差（负值=主队排名更高/更好，因为数字越小=排名越高）
+        例：主队排名2 客队排名20 → rank_gap = -18 → 主队远优"""
         if m.home_rank is None or m.away_rank is None:
             return None
         return m.home_rank - m.away_rank
@@ -272,7 +317,7 @@ class V11Analyzer:
         if abs(rank_gap) <= RANK_GAP_HIGH:
             return None          # 均势，无法判断
 
-        fundamental_favors_home = (rank_gap > 0)
+        fundamental_favors_home = (rank_gap < 0)  # rank_gap < 0 → 主队排名更高/更强
         market_favors_home = (direction == Direction.WIN)
         market_favors_away = (direction == Direction.LOSS)
 
@@ -316,6 +361,34 @@ class V11Analyzer:
             convert_score = 0.5  # 让平或其他情况无法量化换算
 
         return aligned, round(convert_score, 2)
+
+    # ── 排名方向说明 ──────────────────────────────
+
+    def _rank_note(self, m: Match) -> str:
+        """人类可读的排名方向说明
+        rank_gap = home_rank - away_rank
+        rank_gap < 0 → 主队排名数字更小 → 主队更强
+        rank_gap > 0 → 客队排名数字更小 → 客队更强
+        """
+        if m.home_rank is None or m.away_rank is None:
+            return "无排名数据"
+        gap = m.home_rank - m.away_rank
+        if gap == 0:
+            return f"同排第{m.home_rank}名"
+        # gap < 0 → 主队优；gap > 0 → 客队优
+        if gap < 0:
+            better_team = f"主队{m.home_team}"
+        else:
+            better_team = f"客队{m.away_team}"
+        rank_diff = abs(gap)
+        note = f"{better_team}高{rank_diff}位"
+        if abs(gap) >= 10:
+            note += "（悬殊）"
+        elif abs(gap) >= 5:
+            note += "（显著）"
+        else:
+            note += "（均势）"
+        return note
 
     # ── 第四步：赔率走势监控 ────────────────────
 
@@ -407,6 +480,30 @@ class V11Analyzer:
             rank_gap, fundamental_agrees, avg_agrees, avg_convert_score, trend,
         )
 
+        # 诊断信息
+        rank_note = self._rank_note(m)
+
+        # 检查是否实际逆市场
+        raw_options = [
+            (Direction.WIN, m.odds_win),
+            (Direction.DRAW, m.odds_draw),
+            (Direction.LOSS, m.odds_loss),
+        ]
+        raw_market_dir, _ = min(raw_options, key=lambda x: x[1])
+        is_contrarian = (direction != raw_market_dir)
+
+        vote_parts = []
+        if m.avg_odds is not None:
+            vote_parts.append(f"百家{'同' if avg_agrees else '反'}")
+        if rank_gap is not None and abs(rank_gap) > RANK_GAP_HIGH:
+            vote_parts.append(f"基本面{'同' if fundamental_agrees else '反'}")
+        market_agree = len(vote_parts) == 0 or all("同" in v for v in vote_parts)
+        votes_str = " ".join(vote_parts)
+        if is_contrarian:
+            vote_parts_str = f"⚡{votes_str} 逆市场{raw_market_dir}"
+        else:
+            vote_parts_str = f"✅{votes_str} 跟市场"
+
         pred = Prediction(
             match_id=m.match_id,
             direction=direction,
@@ -416,6 +513,8 @@ class V11Analyzer:
             rank_gap=rank_gap,
             trend=trend,
             confidence=confidence,
+            rank_note=rank_note,
+            vote_info=vote_parts_str,
         )
 
         if tracker:
@@ -624,14 +723,11 @@ if __name__ == "__main__":
     print("  🍒 Cherry V11 — 单场分析结果")
     print("=" * 60)
     for p in results:
-        print(f"\n  [{p.match_id}] {p.direction}")
-        print(f"  └ 标签={p.label}  赔率={p.min_odd}  spread={p.spread}")
-        print(f"      排名差={p.rank_gap}  走势={p.trend}  置信度={p.confidence}%")
-
-        # 展示 Kelly 建议
         kelly_pct = kelly_criterion(p.min_odd, p.confidence / 100)
-        if kelly_pct > 0:
-            print(f"      Kelly建议={kelly_pct*100:.1f}%")
+        kelly_str = f"  Kelly={kelly_pct*100:.1f}%" if kelly_pct > 0 else ""
+        print(f"\n  [{p.match_id}] {p.direction}")
+        print(f"  └ 标签={p.label}  赔率={p.min_odd}  置信度={p.confidence}%{kelly_str}")
+        print(f"    {p.vote_info}  |  {p.rank_note}")
 
     print("\n" + "=" * 60)
     print("  串关方案 + Kelly 资金分配")
