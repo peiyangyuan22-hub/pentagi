@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +145,11 @@ func (t *terminal) ExecCommand(
 	timeout time.Duration,
 ) (string, error) {
 	containerName := PrimaryTerminalName(t.flowID)
+
+	// Block dangerous operations that could enable container escape or host compromise
+	if err := checkDangerousCommand(command); err != nil {
+		return "", fmt.Errorf("security check failed: %w", err)
+	}
 
 	// create options for starting the exec process
 	cmd := []string{
@@ -422,6 +428,40 @@ func PrimaryTerminalName(flowID int64) string {
 
 func (t *terminal) IsAvailable() bool {
 	return t.dockerClient != nil
+}
+
+// dangerousCommandPatterns lists command patterns that are blocked for security reasons.
+// These could enable container escape, host compromise, or privilege escalation.
+var dangerousCommandPatterns = []struct {
+	pattern     string
+	description string
+}{
+	{`\bmount\b`, "Mount operations can expose host filesystem to container"},
+	{`\bumount\b`, "Unmount operations"},
+	{`\bnsenter\b`, "Namespace enter can escape container"},
+	{`--privileged\b`, "Privileged mode grants host-level capabilities"},
+	{`--pid=host\b`, "PID namespace host sharing can leak host processes"},
+	{`--network=host\b`, "Network namespace host sharing"},
+	{`--cap-add\b`, "Adding capabilities can enable container escape"},
+	{`--device\b`, "Device passthrough can access host hardware"},
+	{`/var/run/docker\.sock`, "Docker socket access allows container management"},
+	{`cgroupfs`, "cgroup manipulation can lead to container escape"},
+	{`release_agent`, "cgroup release_agent is a known container escape vector"},
+	{`notify_on_release`, "cgroup notify_on_release container escape technique"},
+	{`docker run\b`, "Nested Docker enables full host control"},
+	{`\bdocker\s+-H\b`, "Remote Docker daemon connection"},
+	{`\bkubectl\b`, "Kubernetes access from within container"},
+}
+
+func checkDangerousCommand(command string) error {
+	lower := strings.ToLower(command)
+	for _, dc := range dangerousCommandPatterns {
+		re := regexp.MustCompile(dc.pattern)
+		if re.MatchString(lower) {
+			return fmt.Errorf("blocked dangerous command pattern '%s': %s", dc.pattern, dc.description)
+		}
+	}
+	return nil
 }
 
 func truncateString(s string, maxLen int) string {
