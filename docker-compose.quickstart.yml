@@ -1,0 +1,78 @@
+# PentAGI Quickstart — minimal services for a full working stack
+# Usage: docker compose -f docker-compose.quickstart.yml up
+#
+# Includes: pentagi core, postgres, scraper
+# Excludes: graphiti, langfuse, observability (enable via docker-compose-*.yml)
+
+volumes:
+  pentagi-data:
+    driver: local
+  pentagi-ssl:
+    driver: local
+  pentagi-postgres-data:
+    driver: local
+
+networks:
+  pentagi-network:
+    driver: bridge
+    name: pentagi-network
+
+services:
+  pentagi:
+    image: ${PENTAGI_IMAGE:-vxcontrol/pentagi:latest}
+    restart: unless-stopped
+    container_name: pentagi
+    hostname: pentagi
+    expose:
+      - 8080
+    ports:
+      - "${PENTAGI_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://pentagiuser:pentagipass@pgvector:5432/pentagidb?sslmode=disable}
+      DOCKER_SOCKET: /var/run/docker.sock
+      DOCKER_INSIDE: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - pentagi-data:/opt/pentagi/data
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    networks:
+      - pentagi-network
+
+  pgvector:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    container_name: pentagi-pgvector
+    hostname: pgvector
+    expose:
+      - 5432
+    environment:
+      POSTGRES_USER: pentagiuser
+      POSTGRES_PASSWORD: pentagipass
+      POSTGRES_DB: pentagidb
+    volumes:
+      - pentagi-postgres-data:/var/lib/postgresql/data
+      - ./backend/migrations/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pentagiuser -d pentagidb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - pentagi-network
+
+  scraper:
+    image: vxcontrol/scraper:latest
+    restart: unless-stopped
+    container_name: pentagi-scraper
+    hostname: scraper
+    expose:
+      - 8080
+    environment:
+      SCRAPER_PUBLIC: "http://pentagi:8080"
+      SERVER_PORT: "8080"
+    networks:
+      - pentagi-network

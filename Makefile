@@ -159,7 +159,7 @@ pre-commit-install: ## Install git pre-commit hook
 
 # ─── Quick Start ─────────────────────────────────────────
 
-quickstart: ## One-command setup for new users: check deps, create .env, launch
+quickstart: ## One-command setup: check deps, create .env, launch minimal stack
 	@echo "⏳ 1/4 Checking prerequisites..."
 	@command -v docker >/dev/null 2>&1 || { echo "❌ docker is required. Install from https://docs.docker.com/get-docker/"; exit 1; }
 	@command -v docker compose >/dev/null 2>&1 || { echo "❌ docker compose is required."; exit 1; }
@@ -187,8 +187,8 @@ quickstart: ## One-command setup for new users: check deps, create .env, launch
 		exit 0; \
 	}
 	@echo "✅ LLM configured"
-	@echo "⏳ 4/4 Starting PentAGI..."
-	@docker compose up -d
+	@echo "⏳ 4/4 Starting PentAGI (core stack: pentagi + postgres + scraper)..."
+	@docker compose -f docker-compose.quickstart.yml up -d
 	@echo "✅ PentAGI is running at http://localhost:8080"
 
 clean-backend: ## Clean backend build artifacts

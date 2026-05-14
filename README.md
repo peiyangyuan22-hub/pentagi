@@ -11,6 +11,7 @@
 [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/2xrMh7qX6m)
 [![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?logo=telegram&logoColor=white)](https://t.me/+Ka9i6CNwe71hMWQy)
 [![Trendshift](https://trendshift.io/api/badge/repositories/15161)](https://trendshift.io/repositories/15161)
+[![codecov](https://codecov.io/gh/vxcontrol/pentagi/branch/main/graph/badge.svg)](https://codecov.io/gh/vxcontrol/pentagi)
 </div>
 
 ---

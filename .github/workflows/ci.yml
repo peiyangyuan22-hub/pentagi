@@ -98,8 +98,18 @@ jobs:
 
       - name: Backend - Test
         working-directory: backend
-        run: go test ./... -v
+        run: go test ./... -v -coverprofile=coverage.out -covermode=atomic
         continue-on-error: true
+
+      - name: Backend - Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          directory: backend
+          files: coverage.out
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Backend - Test Build
         working-directory: backend
