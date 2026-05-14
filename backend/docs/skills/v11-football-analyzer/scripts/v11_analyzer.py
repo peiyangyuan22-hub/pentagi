@@ -497,29 +497,42 @@ class V11Analyzer:
 # ==================== 测试运行 ====================
 
 if __name__ == "__main__":
-    # 实战示例：周四/周五场次
+    # 实战示例：周五场次（2026-05-14/15）
     sample_matches = [
         Match(
-            match_id="周四001", league="西甲",
-            home_team="巴伦西亚", away_team="巴列卡诺",
-            home_rank=13, away_rank=10, handicap=-1,
-            odds_win=4.95, odds_draw=3.85, odds_loss=1.50,
-            avg_odds=AvgOdds(home=2.24, draw=3.08, away=3.50),
+            match_id="周五001", league="澳超",
+            home_team="阿德莱德", away_team="奥克兰FC",
+            home_rank=None, away_rank=None, handicap=-1,
+            odds_win=4.50, odds_draw=3.95, odds_loss=1.53,
+            avg_odds=AvgOdds(home=2.30, draw=3.50, away=2.80),
         ),
         Match(
-            match_id="周五005", league="英超",
-            home_team="维拉", away_team="利物浦",
-            home_rank=5, away_rank=4, handicap=1,
-            odds_win=1.59, odds_draw=3.90, odds_loss=4.80,
-            avg_odds=AvgOdds(home=1.57, draw=4.20, away=5.50),
-            prev_odds_win=1.62, prev_odds_draw=3.90, prev_odds_loss=4.70,
+            match_id="周五002", league="沙特联",
+            home_team="达马克", away_team="迈季迈阿宽广",
+            home_rank=15, away_rank=10, handicap=-1,
+            odds_win=3.25, odds_draw=3.35, odds_loss=1.92,
+            avg_odds=AvgOdds(home=1.78, draw=3.40, away=4.21),
         ),
         Match(
             match_id="周五003", league="沙特联",
             home_team="布赖代合作", away_team="利雅得",
             home_rank=5, away_rank=16, handicap=-1,
-            odds_win=2.54, odds_draw=3.30, odds_loss=2.46,
-            avg_odds=AvgOdds(home=1.65, draw=3.80, away=4.75),
+            odds_win=2.54, odds_draw=3.40, odds_loss=2.27,
+            avg_odds=AvgOdds(home=1.69, draw=3.73, away=4.36),
+        ),
+        Match(
+            match_id="周五004", league="法甲",
+            home_team="圣埃蒂安", away_team="罗德兹",
+            home_rank=None, away_rank=None, handicap=-1,
+            odds_win=2.90, odds_draw=3.45, odds_loss=2.02,
+            avg_odds=AvgOdds(home=1.69, draw=3.96, away=4.28),
+        ),
+        Match(
+            match_id="周五005", league="英超",
+            home_team="维拉", away_team="利物浦",
+            home_rank=5, away_rank=4, handicap=1,
+            odds_win=1.59, odds_draw=3.90, odds_loss=4.10,
+            avg_odds=AvgOdds(home=2.92, draw=3.72, away=2.23),
         ),
     ]
 
