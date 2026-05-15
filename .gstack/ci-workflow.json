@@ -1,0 +1,116 @@
+{
+  "status": "ok",
+  "summary": "Generated workflow blueprint with 8 steps",
+  "artifacts": [
+    ".gstack\\ci-workflow.json"
+  ],
+  "details": {
+    "workflow_name": "PentAGI CI/CD Pipeline",
+    "trigger": "on-push-to-develop",
+    "steps": [
+      {
+        "order": 1,
+        "name": "Run Go Tests",
+        "type": "task",
+        "on_failure": "stop"
+      },
+      {
+        "order": 2,
+        "name": "Run Frontend Tests",
+        "type": "task",
+        "on_failure": "stop"
+      },
+      {
+        "order": 3,
+        "name": "Build Docker Images",
+        "type": "task",
+        "on_failure": "stop"
+      },
+      {
+        "order": 4,
+        "name": "Security Scan",
+        "type": "task",
+        "on_failure": "stop"
+      },
+      {
+        "order": 5,
+        "name": "Code Review",
+        "type": "llm",
+        "on_failure": "stop"
+      },
+      {
+        "order": 6,
+        "name": "Create PR to main",
+        "type": "task",
+        "on_failure": "notify"
+      },
+      {
+        "order": 7,
+        "name": "Deploy to Staging",
+        "type": "task",
+        "on_failure": "notify"
+      },
+      {
+        "order": 8,
+        "name": "Notify Team",
+        "type": "task",
+        "on_failure": "skip"
+      }
+    ],
+    "n8n_blueprint": {
+      "name": "PentAGI CI/CD Pipeline",
+      "trigger": "on-push-to-develop",
+      "steps": [
+        {
+          "order": 1,
+          "name": "Run Go Tests",
+          "type": "task",
+          "on_failure": "stop"
+        },
+        {
+          "order": 2,
+          "name": "Run Frontend Tests",
+          "type": "task",
+          "on_failure": "stop"
+        },
+        {
+          "order": 3,
+          "name": "Build Docker Images",
+          "type": "task",
+          "on_failure": "stop"
+        },
+        {
+          "order": 4,
+          "name": "Security Scan",
+          "type": "task",
+          "on_failure": "stop"
+        },
+        {
+          "order": 5,
+          "name": "Code Review",
+          "type": "llm",
+          "on_failure": "stop"
+        },
+        {
+          "order": 6,
+          "name": "Create PR to main",
+          "type": "task",
+          "on_failure": "notify"
+        },
+        {
+          "order": 7,
+          "name": "Deploy to Staging",
+          "type": "task",
+          "on_failure": "notify"
+        },
+        {
+          "order": 8,
+          "name": "Notify Team",
+          "type": "task",
+          "on_failure": "skip"
+        }
+      ]
+    },
+    "dry_run": false
+  }
+}
