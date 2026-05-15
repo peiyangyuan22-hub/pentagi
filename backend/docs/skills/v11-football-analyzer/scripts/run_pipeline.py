@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""V11完整流水线：500网 → 排名 → OddsCache → Pipeline → 输出"""
+"""V11完整流水线：500网 → 排名 → OddsCache → Pipeline → 输出 + 5000次MC模拟"""
 import sys, json, os
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 from v11_odds_cache import OddsCache
 from v11_rankings import RankProvider
-from v11_analyzer_v2 import V11Analyzer, AvgOdds, Match, kelly_criterion
+from v11_analyzer_v2 import V11Analyzer, AvgOdds, Match, kelly_criterion, monte_carlo_parlay, monte_carlo_simulation
 
 print("🦞 V11 完整自动流水线")
 print("=" * 55)
@@ -89,6 +89,7 @@ for i, p in enumerate(results):
 print(f"\n📊 分类统计")
 greens = [r for r in results if "让" in r.direction and r.confidence >= 70]
 yellows = [r for r in results if r.confidence >= 50 and r.confidence < 70]
+grays = [r for r in results if r.confidence < 50 and r.confidence > 0]
 blacks = [r for r in results if r.confidence == 0]
 
 print(f"  🟢绿标: {len(greens)}")
@@ -100,27 +101,58 @@ for p in yellows:
 print(f"  ⚠️灰标: {len(grays)}")
 print(f"  🚫不入: {len(blacks)}")
 
-# 7. 串关
+# 7. MC模拟 + 策略
+print("\n🎲 Step 5: 串关 + 5000次蒙特卡洛模拟")
 strategies = analyzer.build_strategies(results)
 fund = strategies["recommended_fund"]
-print(f"\n💎 串关方案")
-for name, pk, kk, sk in [
-    ("A 稳健基石", "strategy_a", "kelly_a", "A"),
-    ("B 均衡回报", "strategy_b", "kelly_b", "B"),
-    ("C 高赔冲刺", "strategy_c", "kelly_c", "C"),
-]:
-    picks = strategies[pk]
-    f = fund[sk]
+
+# 安全地组织3套4串1方案
+all_picks = {
+    "A": {
+        "picks": strategies["strategy_a"],
+        "name": "A 稳健基石",
+        "fund": fund["A"] if "A" in fund else 0,
+    },
+    "B": {
+        "picks": strategies["strategy_b"],
+        "name": "B 均衡回报",
+        "fund": fund["B"] if "B" in fund else 0,
+    },
+    "C": {
+        "picks": strategies["strategy_c"],
+        "name": "C 高赔冲刺",
+        "fund": fund["C"] if "C" in fund else 0,
+    },
+}
+
+for key, info in all_picks.items():
+    picks = info["picks"]
+    f = info["fund"]
+    name = info["name"]
+    
     if picks:
         combo = 1.0
         for p in picks:
             combo *= p.min_odd
+        
+        # 5000次MC模拟
+        mc = monte_carlo_parlay(picks, num_simulations=5000, seed=42)
+        
         print(f"\n  [{name}]  资金={f}%  |  {combo:.2f}x")
+        print(f"  ─── 5000次蒙特卡洛模拟 ───")
+        print(f"  4串1全中概率: {mc['all_hit_prob']*100:.2f}%")
+        print(f"  预期回报: {mc['expected_return']:.2f}x (全中赔率 {mc['combo_odd']}x)")
+        print(f"  中奖分布:")
+        for k, v in sorted(mc['hit_distribution'].items()):
+            print(f"    {k}: {v*100:.1f}%")
+        print(f"  ─── 场次明细 ───")
         for i, p in enumerate(picks):
+            pmc = monte_carlo_simulation(p, num_simulations=5000, seed=42)
             k = kelly_criterion(p.min_odd, p.confidence / 100)
-            print(f"    {i+1}. {p.match_id} {p.direction} odd={p.min_odd} conf={p.confidence}% Kelly={k*100:.1f}%")
+            print(f"    {i+1}. {p.match_id} {p.direction} odd={p.min_odd} conf={p.confidence}%"
+                  f"  MC命中率={pmc['hit_rate']*100:.1f}%  Kelly={k*100:.1f}%")
     else:
         print(f"\n  [{name}]  (无合格4串1)")
 
 print(f"\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-print("✅ 流水线完成")
+print("✅ 流水线完成 (含5000次MC)")
