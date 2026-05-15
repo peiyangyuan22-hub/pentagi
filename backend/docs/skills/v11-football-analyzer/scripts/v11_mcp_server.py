@@ -272,28 +272,104 @@ def handle_request(request: dict) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"未知方法: {method}"}}
 
 
+def handle_notification(msg: dict) -> None:
+    """处理通知（无需回复）"""
+    method = msg.get("method", "")
+    if method == "notifications/initialized":
+        pass  # 客户端已初始化，无需回复
+
+
 def main():
     """主循环：从stdin读请求，写stdout响应"""
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     
-    # 发送初始化消息
-    init_msg = {
-        "jsonrpc": "2.0",
-        "method": "tools/list",
-        "params": {},
-    }
-    main_loop = True
+    initialized = False
     
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
         try:
-            request = json.loads(line)
-            response = handle_request(request)
-            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+            msg = json.loads(line)
+            
+            # 新版MCP初始化交互：
+            # 1. 客户端发 {"method": "initialize", ...}
+            # 2. 服务端回复 {"jsonrpc":"2.0","id":...,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"v11-mcp","version":"2.0"},"capabilities":{"tools":{}}}}
+            # 3. 客户端发 {"method":"notifications/initialized"}
+            # 4. 之后才发 tools/list 等
+            method = msg.get("method", "")
+            
+            if method == "initialize":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "serverInfo": {
+                            "name": "v11-mcp",
+                            "version": "2.0",
+                        },
+                        "capabilities": {
+                            "tools": {},
+                        },
+                    },
+                }
+                sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+            
+            elif method == "notifications/initialized":
+                initialized = True
+                # 无需回复
+            
+            elif method == "tools/list":
+                result = []
+                for name, info in TOOLS.items():
+                    result.append({
+                        "name": name,
+                        "description": info["description"],
+                        "inputSchema": info["params"],
+                    })
+                response = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": result}}
+                sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+            
+            elif method == "tools/call":
+                tool_name = msg.get("params", {}).get("name", "")
+                tool_args = msg.get("params", {}).get("arguments", {})
+                
+                if tool_name not in TOOLS:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": msg.get("id"),
+                        "error": {"code": -32601, "message": f"未知工具: {tool_name}"},
+                    }
+                    sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+                    continue
+                
+                try:
+                    result = TOOLS[tool_name]["fn"](tool_args)
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": msg.get("id"),
+                        "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}]},
+                    }
+                except Exception as e:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": msg.get("id"),
+                        "error": {"code": -32603, "message": str(e), "data": traceback.format_exc()},
+                    }
+                sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+            
+            else:
+                # 未知方法，提供有意义的错误
+                response = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32601, "message": f"未知方法: {method}"}}
+                sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+                
         except json.JSONDecodeError:
             error_resp = {
                 "jsonrpc": "2.0",
