@@ -622,8 +622,13 @@ class LabelStep(PipelineStep):
         
         # 计算置信度
         base_conf = 55
+        
+        # 基本面确认——排名差距<3位时减半效果
         if ctx.fundamental_agrees is True:
-            base_conf += 15
+            if ctx.rank_gap is not None and abs(ctx.rank_gap) < 3:
+                base_conf += 8  # 弱基本面确认
+            else:
+                base_conf += 15  # 强基本面确认
         if ctx.avg_agrees is True:
             base_conf += 10
         base_conf += int(ctx.avg_convert_score * 8)
@@ -632,7 +637,8 @@ class LabelStep(PipelineStep):
         
         final_conf = min(base_conf, 80)
         
-        if final_conf >= 65:
+        # 绿标门槛提高：72分 + 排名差距>=3
+        if final_conf >= 72 and abs(ctx.rank_gap or 0) >= 3:
             ctx.label = Label.GREEN
         elif final_conf >= 40:
             ctx.label = Label.YELLOW
@@ -803,23 +809,24 @@ class V11Analyzer:
         
         eligible = greens + hots + yellows
         
-        def pick_strategy(name: str, rules: dict) -> list:
-            pool = list(eligible)
+        def pick_strategy(name: str, rules: dict, used_ids: set = None) -> list:
+            """选方案，used_ids是已用比赛ID（正交约束）"""
+            pool = [p for p in eligible if p.match_id not in (used_ids or set())]
             selected = []
             for rule_type, count in rules.get("force", {}).items():
                 candidates = {
-                    "green": list(greens),
-                    "hot": list(hots),
-                    "yellow": list(yellows),
+                    "green": [p for p in pool if p.is_green],
+                    "hot": [p for p in pool if p.is_hot],
+                    "yellow": [p for p in pool if p.is_yellow],
                 }.get(rule_type, [])
                 if name == "A":
-                    candidates = [p for p in candidates if p.min_odd < 2.00]
+                    candidates = sorted(candidates, key=lambda x: x.min_odd)
                 elif name == "C":
                     candidates = sorted(candidates, key=lambda x: -x.min_odd)
                 for p in candidates:
                     if len(selected) >= count:
                         break
-                    if p not in selected and p in pool:
+                    if p not in selected:
                         selected.append(p)
             
             remaining = [p for p in pool if p not in selected]
@@ -841,9 +848,17 @@ class V11Analyzer:
             
             return selected[:4]
         
-        strategy_a = pick_strategy("A", {"force": {"green": 3}})
-        strategy_b = pick_strategy("B", {"force": {"green": 2, "yellow": 1}})
-        strategy_c = pick_strategy("C", {"force": {"green": 2, "hot": 1}})
+        # 正交选方案：A选完后A的场次B不能选，B选完后A+B的场次C不能选
+        used_ids = set()
+        strategy_a = pick_strategy("A", {"force": {"green": 3}}, used_ids)
+        for p in strategy_a:
+            used_ids.add(p.match_id)
+        
+        strategy_b = pick_strategy("B", {"force": {"green": 2, "yellow": 1}}, used_ids)
+        for p in strategy_b:
+            used_ids.add(p.match_id)
+        
+        strategy_c = pick_strategy("C", {"force": {"green": 2, "hot": 1}}, used_ids)
         
         kelly_a = self._kelly_weights(strategy_a)
         kelly_b = self._kelly_weights(strategy_b)
