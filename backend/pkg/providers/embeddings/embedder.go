@@ -60,13 +60,20 @@ func New(cfg *config.Config) (Embedder, error) {
 		f = newVoyageAI
 	case "none":
 		return &embedder{nil}, nil
+	case "":
+		logrus.Warn("embedding provider is empty, disabling embeddings")
+		return &embedder{nil}, nil
 	default:
-		return &embedder{nil}, fmt.Errorf("unsupported embedding provider: %s", cfg.EmbeddingProvider)
+		logrus.WithField("provider", cfg.EmbeddingProvider).
+			Warnf("unsupported embedding provider '%s', disabling embeddings", cfg.EmbeddingProvider)
+		return &embedder{nil}, nil
 	}
 
 	e, err := f(cfg, httpClient)
 	if err != nil {
-		return &embedder{nil}, err
+		logrus.WithError(err).WithField("provider", cfg.EmbeddingProvider).
+			Warn("failed to initialize embedding provider, disabling embeddings")
+		return &embedder{nil}, nil
 	}
 
 	return &embedder{e}, nil

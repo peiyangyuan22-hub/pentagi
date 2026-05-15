@@ -107,6 +107,11 @@ func NewDockerClient(ctx context.Context, db database.Querier, cfg *config.Confi
 	// or maybe need to sync files from container to host machine
 	// or disable passing data directory to the container
 	// or create temporary volume for each container
+	//
+	// Current approach:
+	// 1. DOCKER_WORK_DIR is set → use it directly
+	// 2. Running inside Docker (DOCKER_INSIDE=true) → resolve host path from container mounts
+	// 3. Not inside Docker → dataDir is the host path already
 
 	dataDir, err := filepath.Abs(cfg.DataDir)
 	if err != nil {
@@ -607,15 +612,41 @@ func (dc *dockerClient) pullImage(ctx context.Context, imageName string) error {
 	return nil
 }
 
+// allowedSocketPrefixes defines trusted Docker socket path prefixes.
+// Only socket sources matching these prefixes are accepted from container mounts.
+var allowedSocketPrefixes = []string{
+	"/var/run/docker",
+	"/run/docker",
+}
+
+func isTrustedSocketPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, prefix := range allowedSocketPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func getHostDockerSocket(ctx context.Context, cli *client.Client) string {
 	daemonHost := strings.TrimPrefix(cli.DaemonHost(), "unix://")
 	if info, err := os.Stat(daemonHost); err != nil || info.IsDir() {
 		return defaultDockerSocketPath
 	}
 
+	// Only honor the daemon-reported socket if it's in a trusted location
+	if isTrustedSocketPath(daemonHost) {
+		return daemonHost
+	}
+
+	logrus.WithField("socket", daemonHost).Warn("docker socket path from daemon is not in a trusted location, falling back to default")
+
 	hostname, err := os.Hostname()
 	if err != nil {
-		return daemonHost
+		return defaultDockerSocketPath
 	}
 
 	filterArgs := filters.NewArgs()
@@ -625,7 +656,7 @@ func getHostDockerSocket(ctx context.Context, cli *client.Client) string {
 		Filters: filterArgs,
 	})
 	if err != nil {
-		return daemonHost
+		return defaultDockerSocketPath
 	}
 
 	for _, container := range containers {
@@ -639,13 +670,13 @@ func getHostDockerSocket(ctx context.Context, cli *client.Client) string {
 		}
 
 		for _, mount := range inspect.Mounts {
-			if mount.Destination == daemonHost {
+			if mount.Destination == daemonHost && isTrustedSocketPath(mount.Source) {
 				return mount.Source
 			}
 		}
 	}
 
-	return daemonHost
+	return defaultDockerSocketPath
 }
 
 // return empty string if dataDir should be unique dedicated volume
