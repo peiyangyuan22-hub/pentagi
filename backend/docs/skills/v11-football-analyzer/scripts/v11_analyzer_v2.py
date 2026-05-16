@@ -29,6 +29,50 @@ import os
 import random
 from datetime import datetime, timezone, timedelta
 
+# V11.3 扩展 — Skellam统计模型
+try:
+    from v11_skellam import (
+        SkellamProbabilityEngine, TeamStrengthCalculator,
+        GammaBayesianSmoother, MatchStrengths, SkellamResult,
+    )
+    _HAVE_SKELLAM = True
+except ImportError:
+    _HAVE_SKELLAM = False
+    SkellamProbabilityEngine = None
+
+# V11.3 扩展 — 赔率清洗
+try:
+    from v11_clean_odds import (
+        clean_odds_1x2, clean_odds_handicap,
+        kelly_fraction as clean_kelly,
+        compute_kelly_edge, vig_from_odds,
+    )
+    _HAVE_CLEAN_ODDS = True
+except ImportError:
+    _HAVE_CLEAN_ODDS = False
+
+# V11.3 扩展 — 特征工程
+try:
+    from v11_features import (
+        FeatureFactory, FeatureBuilder, GammaSmoother,
+        RollingStatsCalculator, TeamProfile, MatchFeatures,
+    )
+    _HAVE_FEATURES = True
+except ImportError:
+    _HAVE_FEATURES = False
+
+# V11.3 扩展 — 资金管理
+try:
+    from v11_positioner import (
+        select_four_single, select_four_parlay,
+        select_five_double, select_five_parlay_double,
+        pack_into_five, kelly_fraction as pos_kelly,
+        scale_to_constraints,
+    )
+    _HAVE_POSITIONER = True
+except ImportError:
+    _HAVE_POSITIONER = False
+
 
 # ==================== 常量 ====================
 
@@ -140,6 +184,12 @@ class Context:
     base_win_prob: float = 0.0
     label: str = ""
     confidence: int = 0
+    
+    # V11.3 Skellam扩展
+    skellam_result: Optional["SkellamResult"] = None
+    skellam_edge: float = 0.0          # EV = model_prob * market_odds - 1
+    skellam_model_prob: float = 0.0    # Skellam模型概率
+    skellam_available: bool = False    # 是否有Skellam数据
 
 
 @dataclass
@@ -527,16 +577,36 @@ class DeepHandicapStep(PipelineStep):
 
 class KellyEdgeStep(PipelineStep):
     name = "kelly_edge"
-    description = "计算Kelly Edge（预期价值）"
+    description = "计算Kelly Edge — 优先使用Skellam概率，回退赔率反推"
     
     def input_requirements(self) -> List[str]:
         return ["match", "direction", "min_odd"]
     
     def execute(self, ctx: Context) -> Context:
-        # 估算基础胜率
+        # ── V11.3: 如果有Skellam数据，用它算真实EV ──
+        if ctx.skellam_available and ctx.skellam_result:
+            dir_prob_map = {
+                Direction.WIN: ctx.skellam_result.p_cover,
+                Direction.DRAW: ctx.skellam_result.p_push,
+                Direction.LOSS: ctx.skellam_result.p_lose,
+            }
+            model_prob = dir_prob_map.get(ctx.direction, 0.33)
+            ctx.skellam_model_prob = model_prob
+            
+            # Skellam EV: 模型概率 × 市场赔率 - 1
+            if ctx.min_odd > 1.0:
+                ctx.skellam_edge = model_prob * ctx.min_odd - 1
+            else:
+                ctx.skellam_edge = -1.0
+            
+            # 也设置kelly_edge和base_win_prob以供下游使用
+            ctx.base_win_prob = model_prob
+            ctx.kelly_edge = ctx.skellam_edge
+            return ctx
+        
+        # ── 回退到V11.2原逻辑 ──
         base_win_prob = 1.0 / ctx.min_odd
         
-        # 双信号 + spread中强，调高信任
         strength = SpreadStep.classify_strength(ctx.spread)
         if ctx.vote_strength >= 2 and strength in ("medium", "strong"):
             base_win_prob = min(base_win_prob * 1.15, 0.80)
@@ -545,7 +615,6 @@ class KellyEdgeStep(PipelineStep):
         
         ctx.base_win_prob = base_win_prob
         
-        # Edge = 模型概率 - 隐含概率
         if ctx.min_odd <= 1.0:
             ctx.kelly_edge = -1.0
         else:
@@ -597,6 +666,11 @@ class LabelStep(PipelineStep):
                     base_conf += 10
                 if ctx.avg_agrees is True:
                     base_conf += 8
+                # V11.3: Skellam EV加成
+                if ctx.skellam_edge > 0.1:
+                    base_conf += 12
+                elif ctx.skellam_edge > 0.05:
+                    base_conf += 5
                 imp_conf = int(ctx.base_win_prob * 100)
                 final_conf = min(max(base_conf, imp_conf, 55), 75)
                 ctx.label = Label.YELLOW
@@ -634,6 +708,11 @@ class LabelStep(PipelineStep):
         base_conf += int(ctx.avg_convert_score * 8)
         if ctx.trend == "收紧":
             base_conf += 8
+        # V11.3: Skellam EV加成
+        if ctx.skellam_edge > 0.1:
+            base_conf += 12
+        elif ctx.skellam_edge > 0.05:
+            base_conf += 5
         
         final_conf = min(base_conf, 80)
         
@@ -682,6 +761,84 @@ class DeepOverrideStep(PipelineStep):
         return ctx
 
 
+# ==================== V11.3 步骤: Skellam概率引擎 ====================
+
+class SkellamProbabilityStep(PipelineStep):
+    """
+    V11.3: 用Skellam分布计算真实概率。
+    需要球队攻防λ数据。如果没有 → 跳过（不影响V11.2原有逻辑）。
+    """
+    name = "skellam_probability"
+    description = "Skellam分布计算真实让盘概率（V11.3）"
+    
+    def __init__(self, calc=None, engine=None):
+        super().__init__()
+        self._calc = calc or TeamStrengthCalculator()
+        self._engine = engine or SkellamProbabilityEngine()
+        # 预置球队攻防数据（demo值，实际应从数据源加载）
+        self._team_data: dict = {}
+    
+    def set_team_data(self, data: dict):
+        """设置球队攻防数据: {team_id: (recent_gf, recent_ga)}"""
+        self._team_data = data
+    
+    def availability_check(self, ctx: Context) -> StepResult:
+        if not _HAVE_SKELLAM:
+            return StepResult(
+                step_name=self.name, success=False, availability=False,
+                message="v11_skellam模块未加载",
+            )
+        m = ctx.match
+        team_key = lambda t: f"{m.league}:{t}"
+        hk = team_key(m.home_team)
+        ak = team_key(m.away_team)
+        if hk in self._team_data and ak in self._team_data:
+            return StepResult(
+                step_name=self.name, success=True, availability=True,
+                message=f"有xG/进球数据",
+            )
+        # 没有数据也标记为可用（用默认λ=1.5估算），但标记弱可用
+        return StepResult(
+            step_name=self.name, success=True, availability=True,
+            message="无详细xG数据，使用默认λ估算",
+        )
+    
+    def execute(self, ctx: Context) -> Context:
+        m = ctx.match
+        team_key = lambda t: f"{m.league}:{t}"
+        hk = team_key(m.home_team)
+        ak = team_key(m.away_team)
+        
+        # 获取或默认球队攻防λ
+        if hk in self._team_data and ak in self._team_data:
+            h_gf, h_ga = self._team_data[hk]
+            a_gf, a_ga = self._team_data[ak]
+            h_strength = self._calc.from_goals(hk, h_gf, h_ga)
+            a_strength = self._calc.from_goals(ak, a_gf, a_ga)
+        else:
+            # 默认值：从排名反推（没有xG数据时的粗略估算）
+            home_default = max(0.8, 2.5 * (1.0 - 0.03 * (m.home_rank or 10)))
+            away_default = max(0.8, 2.5 * (1.0 - 0.03 * (m.away_rank or 10)))
+            h_strength = self._calc.from_goals(hk, [home_default]*5, [2.5-home_default]*5)
+            a_strength = self._calc.from_goals(ak, [away_default]*5, [2.5-away_default]*5)
+        
+        ms = MatchStrengths(
+            home_attack_lambda=h_strength.attack_lambda,
+            home_defense_lambda=h_strength.defense_lambda,
+            away_attack_lambda=a_strength.attack_lambda,
+            away_defense_lambda=a_strength.defense_lambda,
+        )
+        
+        result = self._engine.compute_match_result(
+            ms, m.handicap,
+            home_team=m.home_team, away_team=m.away_team, league=m.league,
+        )
+        ctx.skellam_result = result
+        ctx.skellam_available = True
+        
+        return ctx
+
+
 # ==================== Pipeline 编排 ====================
 
 class AnalysisPipeline:
@@ -695,8 +852,9 @@ class AnalysisPipeline:
     4. 不可用步骤跳过，在报告中标记
     """
     
-    def __init__(self, odds_cache=None):
+    def __init__(self, odds_cache=None, skellam_step=None):
         self.odds_cache = odds_cache
+        self.skellam_step = skellam_step or SkellamProbabilityStep()
         self.steps: List[PipelineStep] = [
             MarketDirectionStep(),
             SpreadStep(),
@@ -704,7 +862,8 @@ class AnalysisPipeline:
             AverageOddsStep(),
             TrendStep(odds_cache=odds_cache),
             DeepHandicapStep(),
-            KellyEdgeStep(),
+            self.skellam_step,                # V11.3: Skellam概率（插在Kelly之前）
+            KellyEdgeStep(),                   # V11.3增强版
             LabelStep(),
             DeepOverrideStep(),
         ]
@@ -771,12 +930,12 @@ class AnalysisPipeline:
 # ==================== V11Analyzer v2 ====================
 
 class V11Analyzer:
-    """Cherry V11 分析引擎 v2.0 — Pipeline架构"""
+    """Cherry V11 分析引擎 v2.0 — Pipeline架构（含V11.3 Skellam扩展）"""
     
-    def __init__(self, min_odd=MIN_ODD, max_odd=MAX_ODD, odds_cache=None):
+    def __init__(self, min_odd=MIN_ODD, max_odd=MAX_ODD, odds_cache=None, skellam_step=None):
         self.min_odd = min_odd
         self.max_odd = max_odd
-        self.pipeline = AnalysisPipeline(odds_cache=odds_cache)
+        self.pipeline = AnalysisPipeline(odds_cache=odds_cache, skellam_step=skellam_step)
     
     def analyze_match(self, m: Match, tracker: Optional["ReviewTracker"] = None) -> Prediction:
         ctx = Context(match=m)
